@@ -1,0 +1,6 @@
+BUILD
+__pycache__
+.git
+.idea
+.vscode
+.hg
