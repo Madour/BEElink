@@ -45,7 +45,12 @@ void resetMessage() {
 void readSensors() {
     resetMessage();
 
+    int i = 0;
+
     err = capteur1.readData();
+    while (err != 0 && i++ < 10)
+        err = capteur1.readData();
+
     if (err == 0) {    
         temp = int(capteur1.ReadTemperature(CELCIUS));
         humi = capteur1.ReadHumidity();
@@ -56,7 +61,11 @@ void readSensors() {
         printf("Capteur 1 error %d\r\n", err);
     }
 
+    i = 0;
     err = capteur2.readData();
+    while (err != 0 && i++ < 10)
+        err = capteur2.readData();
+
     if (err == 0) {
         temp = int(capteur2.ReadTemperature(CELCIUS));
         humi += capteur2.ReadHumidity();
