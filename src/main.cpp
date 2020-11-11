@@ -1,5 +1,6 @@
 #include "mbed.h"
 #include "DHT/DHT.h"
+#include "DS1820/DS1820.h"
 
 
 EventQueue printf_queue;
@@ -11,6 +12,8 @@ DigitalOut led1(LED3);
 
 DHT capteur1(D11, DHT11);
 DHT capteur2(D12, DHT11);
+
+DS1820 sonde(D9);
 
 volatile uint32_t ticker_callback_count = 0;
 
@@ -48,8 +51,11 @@ void readSensors() {
     int i = 0;
 
     err = capteur1.readData();
-    while (err != 0 && i++ < 10)
+    while (err != 0 && i < 10) {
+        i++;
+        ThisThread::sleep_for(100);
         err = capteur1.readData();
+    }
 
     if (err == 0) {    
         temp = int(capteur1.ReadTemperature(CELCIUS));
@@ -63,9 +69,11 @@ void readSensors() {
 
     i = 0;
     err = capteur2.readData();
-    while (err != 0 && i++ < 10)
+    while (err != 0 && i < 10){
+        i++;
+        ThisThread::sleep_for(100);
         err = capteur2.readData();
-
+    }
     if (err == 0) {
         temp = int(capteur2.ReadTemperature(CELCIUS));
         humi += capteur2.ReadHumidity();
@@ -78,6 +86,11 @@ void readSensors() {
 
     // calc humidity
     message2 |= (int(humi/humi_cnt)&0xff)<<8;
+
+    sonde.startConversion();
+    ThisThread::sleep_for(1000);
+    
+    printf("temp sonde : %3.1f\n\r", sonde.read());
 
     printf("humi : %f on %d\n\r", humi/humi_cnt, humi_cnt);
 
@@ -106,6 +119,15 @@ int main()
 
     LowPowerTicker ticker;
     ticker.attach(event_queue.event(&readSensors), 10);
+
+    // initialisation de la sonde
+    int r = sonde.begin();
+    printf("sonde begin : %d\n", r);
+    while (r != 1) {
+        ThisThread::sleep_for(50);
+        r = sonde.begin();
+        printf("sonde begin : %d\n", r);
+    }
 
     while (1) {
         ThisThread::sleep_for(11000);
