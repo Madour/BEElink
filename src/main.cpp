@@ -2,7 +2,7 @@
 #include "DHT/DHT.h"
 #include "DS1820/DS1820.h"
 
-#define TEMPS_MESURE_ANEMO 2
+#define TEMPS_MESURE_ANEMO 2.f
 
 EventQueue printf_queue;
 EventQueue event_queue;
@@ -28,7 +28,7 @@ int message3 = 0;
 
 int err;
 
-InterruptIn     anemo(D12);
+InterruptIn     anemo(D5);
 AnalogIn        girouette(A4);
 
 Timeout         timeout;
@@ -53,6 +53,52 @@ void resetMessage() {
     message3 = 0;
     humi = 0.f;
     humi_cnt = 0;
+}
+
+//ISR counting pulses
+void onPulse(void) {
+    if(measuringEnabled)
+        compteurAnemo++;
+}
+// ISR to stop counting
+void stopMeasuring(void) {
+    measuringEnabled = false;
+}
+
+direction lireGirou() {
+
+    float girou = girouette.read();
+    direction sens = N; // valeur par defaut
+    if (0.71 <= girou && girou < 0.74)
+        sens = NW;
+    else if (0.74 <= girou && girou < 0.78)
+        sens = SW;
+    else if (0.78 <= girou && girou < 0.8)
+        sens = NE;
+    else if (0.8 <= girou && girou < 0.82)
+        sens = W;
+    else if (0.82 <= girou && girou < 0.85)
+        sens = SE;
+    else if (0.85 <= girou && girou < 0.87)
+        sens = N;
+    else if (0.87 <= girou && girou < 0.90)
+        sens = E;
+    else if (0.90 <= girou && girou < 0.92)
+        sens = S;
+    return sens;
+}
+
+float lireAnemo() {
+    float vitesse = 0.0;
+    // start measuring 
+    compteurAnemo = 0;
+    timeout.attach(callback(&stopMeasuring), TEMPS_MESURE_ANEMO);
+    measuringEnabled = true;
+
+    while(measuringEnabled);    // wait until the measurement has completed
+    vitesse = (float)(compteurAnemo/(2.f*TEMPS_MESURE_ANEMO))*2.4;
+    
+    return vitesse;
 }
 
 void readSensors() {
@@ -100,84 +146,54 @@ void readSensors() {
     sonde.startConversion();
     ThisThread::sleep_for(1000);
     
-    printf("temp sonde : %3.1f\n\r", sonde.read());
+    /*printf("temp sonde : %3.1f\n\r", sonde.read());
 
-    printf("humi : %f on %d\n\r", humi/humi_cnt, humi_cnt);
+    printf("humi : %f on %d\n\r", humi/humi_cnt, humi_cnt);*/
+
+    int direction =  lireGirou();
+    switch (direction) {
+    case N:
+        printf("Nord\n\r");
+        break;
+    case NE:
+        printf("NordEst\n\r");
+        break;
+    case E:
+        printf("Est\n\r");
+        break;
+    case SE:
+        printf("SudEst\n\r");
+        break;
+    case S:
+        printf("Sud\n\r");
+        break;
+    case SW:
+        printf("SudWest\n\r");
+        break;
+    case W:
+        printf("West\n\r");
+        break;
+    case NW:
+        printf("NordWest\n\r");
+        break;
+    default:
+        break;
+    }
+    float vitesse = lireAnemo();
+
+    printf("vit = %f\n\r", vitesse);
 
     printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
     //sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
 }
 
-//ISR counting pulses
-void onPulse(void) {
-    if(measuringEnabled)
-        compteurAnemo++;
-}
- 
-// ISR to stop counting
-void stopMeasuring(void) {
-    measuringEnabled = false;
-}
- 
-// Initializes counting
-void startMeasuring(void) {
-    compteurAnemo = 0;
-    timeout.attach(callback(&stopMeasuring), 2.0);
-    measuringEnabled = true;
-}
-
-direction lireGirou() {
-
-    float girou = girouette.read();
-    direction sens = N; // valeur par defaut
-        
-    if (girou > 0.85 && girou < 0.86) {
-        sens = N;
-    }
-    else if (girou > 0.785 && girou < 0.795) {
-        sens = NE;
-    }
-    else if (girou > 0.89 && girou < 0.90) {
-        sens = E;
-    }
-    else if (girou > 0.83 && girou < 0.84) {
-        sens = SE;
-    }
-    else if (girou > 0.905 && girou < 0.915) {
-        sens = S;
-    }
-    else if (girou > 0.76 && girou < 0.77) {
-        sens = SW;
-    }
-    else if (girou > 0.81 && girou < 0.82) {
-        sens = W;
-    }
-    else if (girou > 0.72 && girou < 0.73) {
-        sens = NW;
-    }
-    return sens;
-}
-
-float lireAnemo() {
-    
-    float vitesse = 0.0;
-    
-    startMeasuring();
-    while(measuringEnabled);    // wait until the measurement has completed
-    vitesse = (float)(compteurAnemo/(3*((float)TEMPS_MESURE_ANEMO))*2.4);
-    
-    return vitesse;
-}
-
 int main()
 {
-
     Thread printfThread(osPriorityLow);
     printfThread.start(callback(&printf_queue, &EventQueue::dispatch_forever));
     
     Thread events_thread;
     events_thread.start(callback(&event_queue, &EventQueue::dispatch_forever));
-    
 
     #if MBED_TICKLESS
         printf("MBED_TICKLESS is enabled\n");
@@ -189,21 +205,21 @@ int main()
     led_ticker.attach(callback(ledBlink), 0.5);
 
     LowPowerTicker ticker;
-    ticker.attach(event_queue.event(&readSensors), 10);
+    ticker.attach(event_queue.event(&readSensors), 2);
 
     // initialisation de la sonde
     int r = sonde.begin();
     printf("sonde begin : %d\n", r);
-    while (r != 1) {
+    /*while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde.begin();
         printf("sonde begin : %d\n", r);
-    }
+    }*/
     
     // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
     anemo.rise(callback(&onPulse)); 
     while (1) {
         ThisThread::sleep_for(11000);
-        printf_queue.call(&printfCpuStats);
+        //printf_queue.call(&printfCpuStats);
     }
 }
