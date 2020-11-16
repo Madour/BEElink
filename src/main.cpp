@@ -104,7 +104,7 @@ float lireAnemo() {
 void readSensors() {
     resetMessage();
 
-    int i = 0;
+    long int i = 0;
 
     err = capteur1.readData();
     while (err != 0 && i < 10) {
@@ -182,6 +182,9 @@ void readSensors() {
     float vitesse = lireAnemo();
 
     printf("vit = %f\n\r", vitesse);
+
+    message3 |= (int(vitesse*10) & 0xff) << 8;
+    message3 |= (int(direction) & 0x7) << 16 ;
 
     printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
     //sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
