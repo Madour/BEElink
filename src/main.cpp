@@ -2,6 +2,7 @@
 #include "DHT/DHT.h"
 #include "DS1820/DS1820.h"
 
+#define TEMPS_MESURE_ANEMO 2
 
 EventQueue printf_queue;
 EventQueue event_queue;
