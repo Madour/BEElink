@@ -27,6 +27,15 @@ int message3 = 0;
 
 int err;
 
+InterruptIn     anemo(D12);
+AnalogIn        girouette(A4);
+
+Timeout         timeout;
+volatile bool   measuringEnabled = false;
+volatile int    compteurAnemo;
+
+typedef enum direction {N, NE, E, SE, S, SW, W, NW} direction;
+
 void ledBlink(void) {
     led1 = !led1;
     ticker_callback_count++;
@@ -98,6 +107,67 @@ void readSensors() {
     //sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
 }
 
+//ISR counting pulses
+void onPulse(void) {
+    if(measuringEnabled)
+        compteurAnemo++;
+}
+ 
+// ISR to stop counting
+void stopMeasuring(void) {
+    measuringEnabled = false;
+}
+ 
+// Initializes counting
+void startMeasuring(void) {
+    compteurAnemo = 0;
+    timeout.attach(callback(&stopMeasuring), 2.0);
+    measuringEnabled = true;
+}
+
+direction lireGirou() {
+
+    float girou = girouette.read();
+    direction sens = N; // valeur par defaut
+        
+    if (girou > 0.85 && girou < 0.86) {
+        sens = N;
+    }
+    else if (girou > 0.785 && girou < 0.795) {
+        sens = NE;
+    }
+    else if (girou > 0.89 && girou < 0.90) {
+        sens = E;
+    }
+    else if (girou > 0.83 && girou < 0.84) {
+        sens = SE;
+    }
+    else if (girou > 0.905 && girou < 0.915) {
+        sens = S;
+    }
+    else if (girou > 0.76 && girou < 0.77) {
+        sens = SW;
+    }
+    else if (girou > 0.81 && girou < 0.82) {
+        sens = W;
+    }
+    else if (girou > 0.72 && girou < 0.73) {
+        sens = NW;
+    }
+    return sens;
+}
+
+float lireAnemo() {
+    
+    float vitesse = 0.0;
+    
+    startMeasuring();
+    while(measuringEnabled);    // wait until the measurement has completed
+    vitesse = (float)(compteurAnemo/(3*((float)TEMPS_MESURE_ANEMO))*2.4);
+    
+    return vitesse;
+}
+
 int main()
 {
 
@@ -128,7 +198,9 @@ int main()
         r = sonde.begin();
         printf("sonde begin : %d\n", r);
     }
-
+    
+    // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
+    anemo.rise(callback(&onPulse)); 
     while (1) {
         ThisThread::sleep_for(11000);
         printf_queue.call(&printfCpuStats);
