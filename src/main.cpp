@@ -1,6 +1,7 @@
 #include "mbed.h"
 #include "DHT/DHT.h"
 #include "DS1820/DS1820.h"
+#include "HX711/HX711.h"
 
 #define TEMPS_MESURE_ANEMO 2.f
 
@@ -9,12 +10,17 @@ EventQueue event_queue;
 
 mbed_stats_cpu_t stats; // MBED_CPU_STATS_ENABLED or MBED_ALL_STATS_ENABLED
 
+Serial sigfox(D1, D0);
+
 DigitalOut led1(LED3);
 
 DHT capteur1(D11, DHT11);
 DHT capteur2(D12, DHT11);
 
-DS1820 sonde(D9);
+HX711 loadcell(D10, D9);
+
+DS1820 sonde(D6);
+
 
 volatile uint32_t ticker_callback_count = 0;
 
@@ -36,7 +42,7 @@ LowPowerTimer   timer;
 volatile bool   measuringEnabled = false;
 volatile int    compteurAnemo;
 
-typedef enum direction {N, NE, E, SE, S, SW, W, NW} direction;
+typedef enum Direction {N, NE, E, SE, S, SW, W, NW} Direction;
 
 void ledBlink(void) {
     led1 = !led1;
@@ -66,10 +72,10 @@ void stopMeasuring(void) {
     measuringEnabled = false;
 }
 
-direction lireGirou() {
+Direction lireGirou() {
 
     float girou = girouette.read();
-    direction sens = N; // valeur par defaut
+    Direction sens = N; // valeur par defaut
     if (0.71 <= girou && girou < 0.74)
         sens = NW;
     else if (0.74 <= girou && girou < 0.78)
@@ -149,16 +155,17 @@ void readSensors() {
 
     // calc humidity
     message2 |= (int(humi/humi_cnt)&0xff)<<8;
+    printf("humi : %f on %d\n\r", humi/humi_cnt, humi_cnt);
 
     sonde.startConversion();
     ThisThread::sleep_for(1000);
     
-    /*
-    printf("temp sonde : %3.1f\n\r", sonde.read());
-    printf("humi : %f on %d\n\r", humi/humi_cnt, humi_cnt);
-    */
+    temp = int(sonde.read());    
+    printf("temp sonde : %d\n\r", temp);
+    message1 |= (temp&0xff)<< 10;
 
-    int direction =  lireGirou();
+    
+    Direction direction =  lireGirou();
     switch (direction) {
     case N:
         printf("Nord\n\r");
@@ -194,15 +201,21 @@ void readSensors() {
     message3 |= (int(vitesse*10) & 0xff) << 8;
     message3 |= (int(direction) & 0x7) << 16 ;
    
+    loadcell.powerUp();
+    ThisThread::sleep_for(1000);
+    temp = int(loadcell.getGram()/10.f);// poids à la dizaine de gramme près
+    printf("poids : %d0 g\n\r", temp);
+    loadcell.powerDown();
+    message2 |= (temp &0xffff) << 16;
 
-    printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
-    //sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
+    printf("AT$SF=%08X%08X%08X\r\n------------\n\r", message3, message2, message1);
+    sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
 }
 
 int main()
 {
-    Thread printfThread(osPriorityLow);
-    printfThread.start(callback(&printf_queue, &EventQueue::dispatch_forever));
+    /*Thread printfThread(osPriorityLow);
+    printfThread.start(callback(&printf_queue, &EventQueue::dispatch_forever));*/
     
     Thread events_thread;
     events_thread.start(callback(&event_queue, &EventQueue::dispatch_forever));
@@ -213,23 +226,26 @@ int main()
         printf("MBED_TICKLESS is disabled\n");
     #endif
 
-    LowPowerTicker led_ticker;
-    led_ticker.attach(callback(ledBlink), 0.5);
-
-    LowPowerTicker ticker;
-    ticker.attach(event_queue.event(&readSensors), 2);
+    /*LowPowerTicker led_ticker;
+    led_ticker.attach(callback(ledBlink), 0.25);*/
 
     // initialisation de la sonde
     int r = sonde.begin();
     printf("sonde begin : %d\n", r);
-    /*while (r != 1) {
+    while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde.begin();
         printf("sonde begin : %d\n", r);
-    }*/
+    }
     
+    loadcell.tare();
+
     // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
     anemo.rise(callback(&onPulse)); 
+    
+    LowPowerTicker ticker;
+    ticker.attach(event_queue.event(&readSensors), 60);
+
     while (1) {
         ThisThread::sleep_for(11000);
         //printf_queue.call(&printfCpuStats);
