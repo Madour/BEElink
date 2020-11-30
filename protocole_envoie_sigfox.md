@@ -4,15 +4,15 @@ Ligne  : octet
 |  7   |  6   |  5   |  4   |  3   |  2   |  1   |  0   | Octet |
 | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :--: | :---: |
 |      |      |      |      |      |      |      |      |       |
-|  T2  |  T2  |  T2  |  T1  |  T1  |  T1  |  T1  |  T1  |  11   |
+|  T1  |  T1  |  T1  |  T1  |  T1  |  T1  |  T1  |  T1  |  11   |
 |      |      |      |      |      |      |      |      |       |
-|  T4  |  T3  |  T3  |  T3  |  T3  |  T3  |  T2  |  T2  |  10   |
+|  T2  |  T2  |  T2  |  T2  |  T2  |  T2  |  T2  |  T2  |  10   |
 |      |      |      |      |      |      |      |      |       |
-|  T5  |  T5  |  T5  |  T5  |  T4  |  T4  |  T4  |  T4  |   9   |
+|  T3  |  T3  |  T3  |  T3  |  T3  |  T3  |  T3  |  T3  |   9   |
 |      |      |      |      |      |      |      |      |       |
-|  T7  |  T7  |  T6  |  T6  |  T6  |  T6  |  T6  |  T5  |   8   |
+|  T4  |  T4  |  T4  |  T4  |  T4  |  T4  |  T4  |  T4  |   8   |
 |      |      |      |      |      |      |      |      |       |
-|  T8  |  T8  |  T8  |  T8  |  T8  |  T7  |  T7  |  T7  |   7   |
+|  T5  |  T5  |  T5  |  T5  |  T5  |  T5  |  T5  |  T5  |   7   |
 |      |      |      |      |      |      |      |      |       |
 |  H1  |  H1  |  H1  |  H1  |  H1  |  H1  |  H1  |  H1  |   6   |
 |      |      |      |      |      |      |      |      |       |
@@ -20,13 +20,13 @@ Ligne  : octet
 |      |      |      |      |      |      |      |      |       |
 |  Po  |  Po  |  Po  |  Po  |  Po  |  Po  |  Po  |  Po  |   4   |
 |      |      |      |      |      |      |      |      |       |
-| Freq | Freq | Freq | Freq | Freq | Freq | Freq | Freq |   3   |
+|  dM  |  dM  |  dM  |  dM  |  dM  |  dM  |  dM  |  dM  |   3   |
 |      |      |      |      |      |      |      |      |       |
 |  V   |  V   |  V   |  V   |  V   |  V   |  V   |  V   |   2   |
 |      |      |      |      |      |      |      |      |       |
 |      |      |      |      |      |  D   |  D   |  D   |   1   |
 |      |      |      |      |      |      |      |      |       |
-|      |      |      |      |      |      |      |      |   0   |
+| Pow  |  S1  |  S2  |  S3  |  S4  |      |      |      |   0   |
 |      |      |      |      |      |      |      |      |       |
 
 Légende : 
@@ -35,15 +35,13 @@ T = temperature
 
 H = humidité
 
-Freq = freq de bourdonnement
-
 V = vitesse du vent
 
 D = direction du vent
 
-Pr = pression
-
 Po = poids
+
+dM = delta Masse
 
 Message envoyé en big endian:
 

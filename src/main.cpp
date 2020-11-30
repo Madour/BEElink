@@ -5,13 +5,17 @@
 
 #define TEMPS_MESURE_ANEMO 2.f
 
-EventQueue printf_queue;
+//EventQueue printf_queue;
 EventQueue event_queue;
+EventQueue alert_queue;
+
 
 mbed_stats_cpu_t stats; // MBED_CPU_STATS_ENABLED or MBED_ALL_STATS_ENABLED
 
 Serial sigfox(D1, D0);
 
+DigitalOut led(LED3);
+DigitalOut led2(LED2);
 
 DHT capteur1(D3, DHT11);
 //DHT capteur2(D12, DHT11);
@@ -33,13 +37,21 @@ volatile uint32_t ticker_callback_count = 0;
 
 int temp;
 float humi;
-int humi_cnt = 0;
 
 int message1 = 0;
 int message2 = 0;
 int message3 = 0;  
 
 int err;
+
+int sonde_init[4] = {0, 0, 0, 0};
+
+int temp_mem[5];
+int humi_mem;
+int mass_mem=0;
+int mass_delta=0;
+int wind_mem;
+int dir_mem;
 
 Timeout         timeout;
 LowPowerTimer   timer;
@@ -54,12 +66,18 @@ void printfCpuStats(void) {
     printf("CPU %lu : up time %9llu (sleep %2llu%%, deepsleep %2llu%%)\n", ticker_callback_count, stats.uptime, (stats.sleep_time * 100) / stats.uptime, (stats.deep_sleep_time * 100) / stats.uptime);
 }
 
+void ledBlink() {
+    led = !led;
+}
+
 void resetMessage() {
     message1 = 0;
     message2 = 0;
     message3 = 0;
+    for (int i = 0; i < 4; ++i) {
+        message3 |= (sonde_init[i] & 1) << (30-i);
+    }
     humi = 0.f;
-    humi_cnt = 0;
 }
 
 //ISR counting pulses
@@ -115,6 +133,19 @@ float lireAnemo() {
     return vitesse;
 }
 
+void readMass() {
+    loadcell.powerUp();
+    ThisThread::sleep_for(1000);
+    temp = std::max(0, int(loadcell.getGram()/10.f));// poids à la dizaine de gramme près
+    printf("poids : %d0 g\n\r", temp);
+    loadcell.powerDown();
+
+    if (temp <= 10) {
+        printf("AT$SF=%08X%08X%08X\n\r", 0x1000000, 0, 0);
+        sigfox.printf("AT$SF=%08X%08X%08X\n\r", 0x1000000, 0, 0);
+    }
+}
+
 void readSensors() {
     resetMessage();
 
@@ -130,61 +161,65 @@ void readSensors() {
     if (err == 0) {    
         temp = int(capteur1.ReadTemperature(CELCIUS));
         humi = capteur1.ReadHumidity();
-        humi_cnt++;
-        message1 |= (temp&0x1f)<<0;
     }
     else {
         printf("Capteur 1 error %d\r\n", err);
+        temp = temp_mem[0];
+        humi = humi_mem;    
     }
+    if (temp != 0) {
+        temp_mem[0] = temp+20;            
+    }
+    if (humi != 0) {
+        humi_mem = humi;
+    }
+    message2 |= (temp_mem[0]&0xff)<<0;
+    message2 |= (humi_mem   &0xff)<<8;
 
-    /*i = 0;
-    err = capteur2.readData();
-    while (err != 0 && i < 10){
-        i++;
-        ThisThread::sleep_for(100);
-        err = capteur2.readData();
-    }
-    if (err == 0) {
-        temp = int(capteur2.ReadTemperature(CELCIUS));
-        humi += capteur2.ReadHumidity();
-        humi_cnt++;
-        message1 |= (temp&0x1f)<<5;
-    }
-    else {
-        printf("Capteur 2 error %d\r\n", err);
-    }*/
+    printf("DHT : %d °C  %d humi \n\r", temp_mem[0], humi_mem);
 
-    // calc humidity
-    if (humi_cnt > 0) {
-        message2 |= (int(humi/humi_cnt)&0xff)<<8;
-        printf("humi : %f\n\r", humi/humi_cnt);
-    }
-
-    
+    // SONDE 1
     sonde1.startConversion();
     ThisThread::sleep_for(1000);
-    temp = int(sonde1.read());    
+    temp = int(sonde1.read()); 
     printf("temp sonde1 : %d\n\r", temp);
-    message1 |= (temp&0xff)<< 10;
+    
+    if (temp != 0)
+        temp_mem[1] = temp+20;
+    message1 += (temp_mem[1]&0xff) << 0;
 
+    // SONDE 2
     sonde2.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde2.read());    
     printf("temp sonde2 : %d\n\r", temp);
-    message1 |= (temp&0xff) << 15;
     
+    if (temp != 0)
+        temp_mem[2] = temp+20;
+    message1 += (temp_mem[2]&0xff) * 100;
+    
+    // SONDE 3
     sonde3.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde3.read());    
     printf("temp sonde3 : %d\n\r", temp);
-    message1 |= (temp&0xff) << 20;
+    
+    if (temp != 0)
+        temp_mem[3] = temp+20;
+    message1 += (temp_mem[3]&0xff) * 10000;
 
+    // SONDE 4
     sonde4.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde4.read());    
     printf("temp sonde4 : %d\n\r", temp);
-    message1 |= (temp&0xff)<< 25;
-
+    
+    if (temp != 0)
+        temp_mem[4] = temp+20;
+    message1 += (temp_mem[4]&0xff) * 1000000;
+    
+    printf("Sonde var : %d\n", message1);
+    
     Direction direction =  lireGirou();
     switch (direction) {
     case N:
@@ -226,7 +261,16 @@ void readSensors() {
     temp = std::max(0, int(loadcell.getGram()/10.f));// poids à la dizaine de gramme près
     printf("poids : %d0 g\n\r", temp);
     loadcell.powerDown();
-    message2 |= (temp &0xffff) << 16;
+
+    mass_delta = mass_mem - temp;
+    int sign = (mass_delta < 0) ? 1 : 0;
+    mass_delta = mass_delta*10 + sign;
+    mass_mem = temp;
+
+    message2 |= (mass_mem & 0xffff) << 16;
+
+    message3 |= (mass_delta & 0xff) ;
+
 
     printf("AT$SF=%08X%08X%08X\r\n------------\n\r", message3, message2, message1);
     sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
@@ -241,6 +285,14 @@ int main()
     Thread events_thread;
     events_thread.start(callback(&event_queue, &EventQueue::dispatch_forever));
 
+    Thread alert_thread;
+    alert_thread.start(callback(&alert_queue, &EventQueue::dispatch_forever));
+
+    LowPowerTicker led_ticker;
+    led_ticker.attach(callback(&ledBlink), 0.1);
+
+    led2 = 0;
+
     #if MBED_TICKLESS
         printf("MBED_TICKLESS is enabled\n");
     #else
@@ -250,39 +302,73 @@ int main()
     // initialisation de la sonde
     
     int r = sonde1.begin();
+    int timeout = 20;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde1.begin();
         printf("sonde1 begin : %d\n", r);
+        if (--timeout == 0)
+            break;
     }
+    sonde_init[0] = r;
 
     r = sonde2.begin();
+    timeout = 20;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde2.begin();
         printf("sonde2 begin : %d\n", r);
+        if (--timeout == 0)
+            break;
     }
+    sonde_init[1] = r;
 
     r = sonde3.begin();
+    timeout = 20;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde3.begin();
         printf("sonde3 begin : %d\n", r);
+        if (--timeout == 0)
+            break;
     }
+    sonde_init[2] = r;
 
     r = sonde4.begin();
+    timeout = 20;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde4.begin();
         printf("sonde4 begin : %d\n", r);
+        if (--timeout == 0)
+            break;
     }
+    sonde_init[3] = r;
+
     loadcell.tare();
+
+    message3 |= 1 << 31;
+    for (int i = 0; i < 4; ++i) {
+        message3 |= (sonde_init[i] & 1) << (30-i);
+    }
+    printf("Init state : pow : %d  sondes : %d %d %d %d\n\r", 
+        1, sonde_init[0], sonde_init[1], sonde_init[2], sonde_init[3]);
+    printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
+    sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
+
+
+    printf("Init done \n\r");
+    led_ticker.detach();
+    led = 0;
 
     // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
     anemo.rise(callback(&onPulse)); 
     
     LowPowerTicker ticker;
     ticker.attach(event_queue.event(&readSensors), 600);
+
+    LowPowerTicker alert_ticker;
+    alert_ticker.attach(alert_queue.event(&readMass), 60);
 
     while (1) {
         ThisThread::sleep_for(11000);
