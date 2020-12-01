@@ -4,10 +4,15 @@
 #include "HX711/HX711.h"
 
 #define TEMPS_MESURE_ANEMO 2.f
+#define ALERT_CHECK_PERIOD 30
+#define SENSORS_READ_PERIOD 80
 
 //EventQueue printf_queue;
 EventQueue event_queue;
 EventQueue alert_queue;
+
+LowPowerTicker alert_ticker;
+LowPowerTicker ticker;
 
 
 mbed_stats_cpu_t stats; // MBED_CPU_STATS_ENABLED or MBED_ALL_STATS_ENABLED
@@ -28,6 +33,7 @@ DS1820 sonde1(D12);
 DS1820 sonde2(D11);
 DS1820 sonde3(D10);
 DS1820 sonde4(D9);
+DS1820* sondes[4] = {&sonde1, &sonde2, &sonde3, &sonde4};
 
 // anemo : c'est le blanc
 InterruptIn     anemo(D6);
@@ -42,16 +48,17 @@ int message1 = 0;
 int message2 = 0;
 int message3 = 0;  
 
-int err;
+int err=0;
 
 int sonde_init[4] = {0, 0, 0, 0};
 
-int temp_mem[5];
-int humi_mem;
+int sondes_mem[4]={0, 0, 0, 0};
+int dht_mem=0;
+int humi_mem=0;
 int mass_mem=0;
 int mass_delta=0;
-int wind_mem;
-int dir_mem;
+int wind_mem=0;
+int dir_mem=0;
 
 Timeout         timeout;
 LowPowerTimer   timer;
@@ -70,16 +77,6 @@ void ledBlink() {
     led = !led;
 }
 
-void resetMessage() {
-    message1 = 0;
-    message2 = 0;
-    message3 = 0;
-    for (int i = 0; i < 4; ++i) {
-        message3 |= (sonde_init[i] & 1) << (30-i);
-    }
-    humi = 0.f;
-}
-
 //ISR counting pulses
 void onPulse(void) {
     if(measuringEnabled)
@@ -90,8 +87,66 @@ void stopMeasuring(void) {
     measuringEnabled = false;
 }
 
-Direction lireGirou() {
+void printDirection(Direction direction) {
+    switch (direction) {
+    case N:
+        printf("Nord\n\r");
+        break;
+    case NE:
+        printf("NordEst\n\r");
+        break;
+    case E:
+        printf("Est\n\r");
+        break;
+    case SE:
+        printf("SudEst\n\r");
+        break;
+    case S:
+        printf("Sud\n\r");
+        break;
+    case SW:
+        printf("SudWest\n\r");
+        break;
+    case W:
+        printf("West\n\r");
+        break;
+    case NW:
+        printf("NordWest\n\r");
+        break;
+    default:
+        break;
+    }
+}
 
+void resetMessage() {
+    message1 = 0;
+    message2 = 0;
+    message3 = 0;
+    humi = 0.f;
+}
+
+void buildMessage() {
+    message1 += ((sondes_mem[0]+20)&0xff) * 1;
+    message1 += ((sondes_mem[1]+20)&0xff) * 100;
+    message1 += ((sondes_mem[2]+20)&0xff) * 10000;
+    message1 += ((sondes_mem[3]+20)&0xff) * 1000000;
+
+
+    message2 |= ((dht_mem+20)&0xff)<<0;
+    message2 |= (humi_mem   &0xff)<<8;
+    message2 |= (mass_mem & 0xffff) << 16;
+
+    message3 |= (mass_delta & 0xff) ;
+    message3 |= (int(wind_mem*10) & 0xff) << 8;
+    message3 |= (int(dir_mem) & 0x7) << 16 ;
+    
+    if (sondes_mem[0] < 10 && sondes_mem[1] < 10 && sondes_mem[2] < 10 && sondes_mem[3] < 10) {
+        message3 |= 2<<24;
+    }
+}
+
+
+Direction lireGirou() {
     float girou = girouette.read();
     printf("girou %f\n\r", girou);
     Direction sens = N; // valeur par defaut
@@ -141,121 +196,89 @@ void readMass() {
     loadcell.powerDown();
 
     if (temp <= 10) {
-        printf("AT$SF=%08X%08X%08X\n\r", 0x1000000, 0, 0);
-        sigfox.printf("AT$SF=%08X%08X%08X\n\r", 0x1000000, 0, 0);
+        mass_mem = temp;
+        resetMessage();
+        buildMessage();
+        message3 |= 1<<24;
+        printf("AT$SF=%08X%08X%08X\n\r", message3, message2, message1);
+        sigfox.printf("AT$SF=%08X%08X%08X\n\r", message3, message2, message1);
     }
 }
 
 void readSensors() {
-    resetMessage();
-
+    alert_ticker.detach();
     long int i = 0;
 
+    // DHT 11
     err = capteur1.readData();
     while (err != 0 && i < 10) {
         i++;
         ThisThread::sleep_for(100);
         err = capteur1.readData();
     }
-
     if (err == 0) {    
         temp = int(capteur1.ReadTemperature(CELCIUS));
         humi = capteur1.ReadHumidity();
     }
     else {
         printf("Capteur 1 error %d\r\n", err);
-        temp = temp_mem[0];
+        temp = dht_mem;
         humi = humi_mem;    
     }
-    if (temp != 0) {
-        temp_mem[0] = temp+20;            
-    }
-    if (humi != 0) {
+    if (temp != 0)
+        dht_mem = temp;            
+    if (humi != 0)
         humi_mem = humi;
-    }
-    message2 |= (temp_mem[0]&0xff)<<0;
-    message2 |= (humi_mem   &0xff)<<8;
 
-    printf("DHT : %d °C  %d humi \n\r", temp_mem[0], humi_mem);
+    printf("DHT : %d °C  %d humi \n\r", dht_mem+20, humi_mem);
+
+    // tentative de réinitialisation des sondes non fonctionnelles
+    for (int i = 0; i < 4; ++i) {
+        if (sonde_init[i] == 0) {
+            sondes[i]->begin();
+        }
+    }
 
     // SONDE 1
     sonde1.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde1.read()); 
-    printf("temp sonde1 : %d\n\r", temp);
-    
     if (temp != 0)
-        temp_mem[1] = temp+20;
-    message1 += (temp_mem[1]&0xff) << 0;
+        sondes_mem[0] = temp;
+    printf("temp sonde1 : %d , sent : %d\n\r", temp, sondes_mem[0]);
 
     // SONDE 2
     sonde2.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde2.read());    
-    printf("temp sonde2 : %d\n\r", temp);
-    
     if (temp != 0)
-        temp_mem[2] = temp+20;
-    message1 += (temp_mem[2]&0xff) * 100;
+        sondes_mem[1] = temp;
+    printf("temp sonde2 : %d , sent : %d\n\r", temp, sondes_mem[1]);
     
     // SONDE 3
     sonde3.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde3.read());    
-    printf("temp sonde3 : %d\n\r", temp);
-    
     if (temp != 0)
-        temp_mem[3] = temp+20;
-    message1 += (temp_mem[3]&0xff) * 10000;
+        sondes_mem[2] = temp;
+    printf("temp sonde2 : %d , sent : %d\n\r", temp, sondes_mem[2]);
 
     // SONDE 4
     sonde4.startConversion();
     ThisThread::sleep_for(1000);
     temp = int(sonde4.read());    
-    printf("temp sonde4 : %d\n\r", temp);
-    
     if (temp != 0)
-        temp_mem[4] = temp+20;
-    message1 += (temp_mem[4]&0xff) * 1000000;
-    
-    printf("Sonde var : %d\n", message1);
+        sondes_mem[3] = temp;
+    printf("temp sonde3 : %d , sent : %d\n\r", temp, sondes_mem[3]);
     
     Direction direction =  lireGirou();
-    switch (direction) {
-    case N:
-        printf("Nord\n\r");
-        break;
-    case NE:
-        printf("NordEst\n\r");
-        break;
-    case E:
-        printf("Est\n\r");
-        break;
-    case SE:
-        printf("SudEst\n\r");
-        break;
-    case S:
-        printf("Sud\n\r");
-        break;
-    case SW:
-        printf("SudWest\n\r");
-        break;
-    case W:
-        printf("West\n\r");
-        break;
-    case NW:
-        printf("NordWest\n\r");
-        break;
-    default:
-        break;
-    }
-   
+    printDirection(direction);
+    dir_mem = direction;
+
     float vitesse = lireAnemo();
     printf("compteur : %d \n\r vit = %f\n\r", compteurAnemo, vitesse);
+    wind_mem = vitesse;
 
-    message3 |= (int(vitesse*10) & 0xff) << 8;
-    message3 |= (int(direction) & 0x7) << 16 ;
-   
     loadcell.powerUp();
     ThisThread::sleep_for(1000);
     temp = std::max(0, int(loadcell.getGram()/10.f));// poids à la dizaine de gramme près
@@ -266,14 +289,14 @@ void readSensors() {
     int sign = (mass_delta < 0) ? 1 : 0;
     mass_delta = mass_delta*10 + sign;
     mass_mem = temp;
-
-    message2 |= (mass_mem & 0xffff) << 16;
-
-    message3 |= (mass_delta & 0xff) ;
-
+    
+    resetMessage();
+    buildMessage();
 
     printf("AT$SF=%08X%08X%08X\r\n------------\n\r", message3, message2, message1);
     sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
+
+    alert_ticker.attach(alert_queue.event(&readMass), ALERT_CHECK_PERIOD);
 }
 
 int main()
@@ -300,9 +323,8 @@ int main()
     #endif
 
     // initialisation de la sonde
-    
     int r = sonde1.begin();
-    int timeout = 20;
+    int timeout = 40;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde1.begin();
@@ -313,7 +335,7 @@ int main()
     sonde_init[0] = r;
 
     r = sonde2.begin();
-    timeout = 20;
+    timeout = 40;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde2.begin();
@@ -324,7 +346,7 @@ int main()
     sonde_init[1] = r;
 
     r = sonde3.begin();
-    timeout = 20;
+    timeout = 40;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde3.begin();
@@ -335,7 +357,7 @@ int main()
     sonde_init[2] = r;
 
     r = sonde4.begin();
-    timeout = 20;
+    timeout = 40;
     while (r != 1) {
         ThisThread::sleep_for(50);
         r = sonde4.begin();
@@ -345,7 +367,10 @@ int main()
     }
     sonde_init[3] = r;
 
-    loadcell.tare();
+    loadcell.setOffset(8445576);
+    
+    // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
+    anemo.rise(callback(&onPulse)); 
 
     message3 |= 1 << 31;
     for (int i = 0; i < 4; ++i) {
@@ -353,25 +378,22 @@ int main()
     }
     printf("Init state : pow : %d  sondes : %d %d %d %d\n\r", 
         1, sonde_init[0], sonde_init[1], sonde_init[2], sonde_init[3]);
-    printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
-    sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
-
-
     printf("Init done \n\r");
+    
+    ThisThread::sleep_for(500);
+    resetMessage();
+    readSensors();
+    printf("Init messag sent\n\r");
+
     led_ticker.detach();
     led = 0;
-
-    // assign an ISR to count pulses POUR LE COMPTEUR ANEMOMETRE
-    anemo.rise(callback(&onPulse)); 
     
-    LowPowerTicker ticker;
-    ticker.attach(event_queue.event(&readSensors), 600);
+    ticker.attach(event_queue.event(&readSensors), SENSORS_READ_PERIOD);
 
-    LowPowerTicker alert_ticker;
-    alert_ticker.attach(alert_queue.event(&readMass), 60);
+    alert_ticker.attach(alert_queue.event(&readMass), ALERT_CHECK_PERIOD);
 
     while (1) {
-        ThisThread::sleep_for(11000);
+        ThisThread::sleep_for(110000);
         //printf_queue.call(&printfCpuStats);
     }
 }

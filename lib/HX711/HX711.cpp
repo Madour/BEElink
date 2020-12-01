@@ -42,7 +42,6 @@ HX711::HX711(PinName pinData, PinName pinSck, uint8_t gain)
     wait_us(100);
     sck = 0;
     
-    this->setOffset(averageValue(10)); //TARE de la balance
     this->setScale(SCALE_VALUE);        //Réglage du valeur du SCALE
 }
 

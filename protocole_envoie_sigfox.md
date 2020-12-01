@@ -26,7 +26,7 @@ Ligne  : octet
 |      |      |      |      |      |      |      |      |       |
 |      |      |      |      |      |  D   |  D   |  D   |   1   |
 |      |      |      |      |      |      |      |      |       |
-| Pow  |  S1  |  S2  |  S3  |  S4  |      |      |      |   0   |
+| Flag | Flag | Flag | Flag | Flag | Flag | Flag | Flag |   0   |
 |      |      |      |      |      |      |      |      |       |
 
 Légende : 
@@ -43,6 +43,11 @@ Po = poids
 
 dM = delta Masse
 
+Flags :
+
+- 1 = probleme de masse
+- 2 = probleme de temperature interne
+- 3 = probleme de variation de masse
 Message envoyé en big endian:
 
 - octet 0 est l'octet MSB (le plus à gauche).
