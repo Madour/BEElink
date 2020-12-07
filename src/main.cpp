@@ -4,8 +4,8 @@
 #include "HX711/HX711.h"
 
 #define TEMPS_MESURE_ANEMO 2.f
-#define ALERT_CHECK_PERIOD 30
-#define SENSORS_READ_PERIOD 80
+#define ALERT_CHECK_PERIOD 60
+#define SENSORS_READ_PERIOD 600
 
 //EventQueue printf_queue;
 EventQueue event_queue;
@@ -22,11 +22,11 @@ Serial sigfox(D1, D0);
 DigitalOut led(LED3);
 DigitalOut led2(LED2);
 
-DHT capteur1(D3, DHT11);
+DHT capteur1(D5, DHT11);
 //DHT capteur2(D12, DHT11);
 
 // alimenter en 5V
-HX711 loadcell(D4, D5);
+HX711 loadcell(D3, D4);
 
 
 DS1820 sonde1(D12);
@@ -36,8 +36,8 @@ DS1820 sonde4(D9);
 DS1820* sondes[4] = {&sonde1, &sonde2, &sonde3, &sonde4};
 
 // anemo : c'est le blanc
-InterruptIn     anemo(D6);
-AnalogIn        girouette(A0);
+InterruptIn anemo(D6);
+AnalogIn girouette(A0);
 
 volatile uint32_t ticker_callback_count = 0;
 
@@ -322,50 +322,22 @@ int main()
         printf("MBED_TICKLESS is disabled\n");
     #endif
 
-    // initialisation de la sonde
-    int r = sonde1.begin();
-    int timeout = 40;
-    while (r != 1) {
-        ThisThread::sleep_for(50);
-        r = sonde1.begin();
-        printf("sonde1 begin : %d\n", r);
-        if (--timeout == 0)
-            break;
+    // SYSTEM INIT
+    for (int i = 0; i < 4; ++i) {
+        int r = sondes[i]->begin();
+        int timeout = 40;
+        while(r!=1) {
+            ThisThread::sleep_for(50);
+            r = sondes[i]->begin();
+            if (--timeout == 0) {
+                printf("Sonde %d not initialized \n\r", i);
+                break;
+            }
+        }
+        if (timeout > 0)
+            printf("Sonde %d initialized \n\r", i);
+        sonde_init[i] = r;
     }
-    sonde_init[0] = r;
-
-    r = sonde2.begin();
-    timeout = 40;
-    while (r != 1) {
-        ThisThread::sleep_for(50);
-        r = sonde2.begin();
-        printf("sonde2 begin : %d\n", r);
-        if (--timeout == 0)
-            break;
-    }
-    sonde_init[1] = r;
-
-    r = sonde3.begin();
-    timeout = 40;
-    while (r != 1) {
-        ThisThread::sleep_for(50);
-        r = sonde3.begin();
-        printf("sonde3 begin : %d\n", r);
-        if (--timeout == 0)
-            break;
-    }
-    sonde_init[2] = r;
-
-    r = sonde4.begin();
-    timeout = 40;
-    while (r != 1) {
-        ThisThread::sleep_for(50);
-        r = sonde4.begin();
-        printf("sonde4 begin : %d\n", r);
-        if (--timeout == 0)
-            break;
-    }
-    sonde_init[3] = r;
 
     loadcell.setOffset(8445576);
     
@@ -386,6 +358,8 @@ int main()
     printf("Init messag sent\n\r");
 
     led_ticker.detach();
+
+
     led = 0;
     
     ticker.attach(event_queue.event(&readSensors), SENSORS_READ_PERIOD);
