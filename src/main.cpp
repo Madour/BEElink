@@ -39,10 +39,11 @@ DS1820* sondes[4] = {&sonde1, &sonde2, &sonde3, &sonde4};
 InterruptIn anemo(D6);
 AnalogIn girouette(A0);
 
+AnalogIn batterie(A1);
+
 volatile uint32_t ticker_callback_count = 0;
 
 int temp;
-float humi;
 
 int message1 = 0;
 int message2 = 0;
@@ -52,13 +53,17 @@ int err=0;
 
 int sonde_init[4] = {0, 0, 0, 0};
 
-int sondes_mem[4]={0, 0, 0, 0};
-int dht_mem=0;
-int humi_mem=0;
-int mass_mem=0;
-int mass_delta=0;
-int wind_mem=0;
-int dir_mem=0;
+int sondes_mem[4]={0, 0, 0, 0};     // 8 bits * 4
+
+int dht_mem=0;      // 8 bits
+int humi_mem=0;     // 8 bits
+int mass_mem=0;     // 16 bits
+
+int mass_delta=0;   // 8 bits
+int wind_mem=0;     // 8 bits
+int bat_mem=100;  // 8 bits
+int dir_mem=0;      // 3 bits
+int flags=0;        // 5 bits
 
 Timeout         timeout;
 LowPowerTimer   timer;
@@ -122,7 +127,6 @@ void resetMessage() {
     message1 = 0;
     message2 = 0;
     message3 = 0;
-    humi = 0.f;
 }
 
 void buildMessage() {
@@ -132,17 +136,16 @@ void buildMessage() {
     message1 += ((sondes_mem[3]+20)&0xff) * 1000000;
 
 
-    message2 |= ((dht_mem+20)&0xff)<<0;
-    message2 |= (humi_mem   &0xff)<<8;
+    message2 |= ((dht_mem+20)&0xff) << 0;
+    message2 |= (humi_mem   &0xff) << 8;
     message2 |= (mass_mem & 0xffff) << 16;
 
-    message3 |= (mass_delta & 0xff) ;
+    message3 |= (mass_delta & 0xff);
     message3 |= (int(wind_mem*10) & 0xff) << 8;
-    message3 |= (int(dir_mem) & 0x7) << 16 ;
+    message3 |= (bat_mem & 0xff) << 16;
+    message3 |= (int(dir_mem) & 0x7) << 24;
     
-    if (sondes_mem[0] < 10 && sondes_mem[1] < 10 && sondes_mem[2] < 10 && sondes_mem[3] < 10) {
-        message3 |= 2<<24;
-    }
+    message3 |= (flags & 0x1F) << 27;
 }
 
 
@@ -188,27 +191,49 @@ float lireAnemo() {
     return vitesse;
 }
 
-void readMass() {
+void checkAlert() {
+    flags = 0;
+    
+    printf("Batt : %f \n\r", batterie.read());
+
     loadcell.powerUp();
     ThisThread::sleep_for(1000);
-    temp = std::max(0, int(loadcell.getGram()/10.f));// poids à la dizaine de gramme près
+    temp = std::max(0, int(loadcell.getGram()/10.f));   // poids à la dizaine de gramme près
     printf("poids : %d0 g\n\r", temp);
     loadcell.powerDown();
 
+    int bat = int(batterie.read() * 100);
+    int alert = 0;
+
     if (temp <= 10) {
+        alert = 1;
         mass_mem = temp;
+        flags |= 1;
+        printf("Masse alert : masse = %d0 g", temp);
+    }
+    if ( bat <= 15) {
+        alert = 1;
+        bat_mem = bat;
+        flags |= (1 << 1);
+        printf("Batterie alert : Batterie =  %d % \n\r", bat);
+    }
+    if (sondes_mem[0] < 10 && sondes_mem[1] < 10 && sondes_mem[2] < 10 && sondes_mem[3] < 10) {
+        alert = 1;
+        flags |= 1<<2;
+    }
+    if (alert == 1) {
         resetMessage();
         buildMessage();
-        message3 |= 1<<24;
         printf("AT$SF=%08X%08X%08X\n\r", message3, message2, message1);
         sigfox.printf("AT$SF=%08X%08X%08X\n\r", message3, message2, message1);
     }
 }
 
 void readSensors() {
+    flags = 0;
     alert_ticker.detach();
     long int i = 0;
-
+    float humi = 0.f;
     // DHT 11
     err = capteur1.readData();
     while (err != 0 && i < 10) {
@@ -216,7 +241,7 @@ void readSensors() {
         ThisThread::sleep_for(100);
         err = capteur1.readData();
     }
-    if (err == 0) {    
+    if (err == 0) {
         temp = int(capteur1.ReadTemperature(CELCIUS));
         humi = capteur1.ReadHumidity();
     }
@@ -226,7 +251,7 @@ void readSensors() {
         humi = humi_mem;    
     }
     if (temp != 0)
-        dht_mem = temp;            
+        dht_mem = temp;
     if (humi != 0)
         humi_mem = humi;
 
@@ -270,7 +295,7 @@ void readSensors() {
     if (temp != 0)
         sondes_mem[3] = temp;
     printf("temp sonde3 : %d , sent : %d\n\r", temp, sondes_mem[3]);
-    
+
     Direction direction =  lireGirou();
     printDirection(direction);
     dir_mem = direction;
@@ -285,18 +310,23 @@ void readSensors() {
     printf("poids : %d0 g\n\r", temp);
     loadcell.powerDown();
 
-    mass_delta = mass_mem - temp;
+    mass_delta = temp - mass_mem;
     int sign = (mass_delta < 0) ? 1 : 0;
     mass_delta = mass_delta*10 + sign;
     mass_mem = temp;
-    
+    printf("Delta mass : %d \n\r", mass_delta);
+
+    int bat = int(batterie.read()*100);
+    bat_mem = bat;
+    printf("Batterie %d \n\r", int(batterie.read()*100));
+
     resetMessage();
     buildMessage();
 
     printf("AT$SF=%08X%08X%08X\r\n------------\n\r", message3, message2, message1);
     sigfox.printf("AT$SF=%08X%08X%08X\r\n", message3, message2, message1);
 
-    alert_ticker.attach(alert_queue.event(&readMass), ALERT_CHECK_PERIOD);
+    alert_ticker.attach(alert_queue.event(&checkAlert), ALERT_CHECK_PERIOD);
 }
 
 int main()
@@ -364,7 +394,7 @@ int main()
     
     ticker.attach(event_queue.event(&readSensors), SENSORS_READ_PERIOD);
 
-    alert_ticker.attach(alert_queue.event(&readMass), ALERT_CHECK_PERIOD);
+    alert_ticker.attach(alert_queue.event(&checkAlert), ALERT_CHECK_PERIOD);
 
     while (1) {
         ThisThread::sleep_for(110000);

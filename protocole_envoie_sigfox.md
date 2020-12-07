@@ -24,12 +24,12 @@ Ligne  : octet
 |      |      |      |      |      |      |      |      |       |
 |  V   |  V   |  V   |  V   |  V   |  V   |  V   |  V   |   2   |
 |      |      |      |      |      |      |      |      |       |
-|      |      |      |      |      |  D   |  D   |  D   |   1   |
+|  B   |  B   |  B   |  B   |  B   |  B   |  B   |  B   |   1   |
 |      |      |      |      |      |      |      |      |       |
-| Flag | Flag | Flag | Flag | Flag | Flag | Flag | Flag |   0   |
+| Flag | Flag | Flag | Flag | Flag |  D   |  D   |  D   |   0   |
 |      |      |      |      |      |      |      |      |       |
 
-Légende : 
+Légende :
 
 T = temperature
 
