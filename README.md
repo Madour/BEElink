@@ -1,9 +1,10 @@
-## Open Ruche
-
+## BEElink
 
 #### Setup 
 
-Nécessite mbed CLI, cloner le dépot puis lancer la commande
+Install mbed CLI and gcc arm toolchain (you might need to configure the mbed_settings.py file).
+
+Then, clone this repo and run :
 
 ```shell
 mbed deploy
@@ -11,15 +12,12 @@ mbed deploy
 
 #### Build
 
-Pour compiler :
-
 ```shell
 mbed compile
 ```
 
-Si tu veux flasher directement et ouvrir un terminal serial (pour lire les printf)
+You can use this command to flash your microcontroller and open a serial terminal :
 
 ```shell
 mbed compile --flash --sterm
 ```
-
