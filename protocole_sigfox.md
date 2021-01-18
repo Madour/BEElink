@@ -32,7 +32,7 @@ dM = delta masse
 Flags :
 
 - 1 = mass alert
-- 2 = interior temperature alert
-- 3 = mass variation alert
+- 2 = battery alert
+- 3 = interior temperature alert
 - 4 : unused
 - 5 : unused

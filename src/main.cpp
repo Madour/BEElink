@@ -160,7 +160,7 @@ void checkAlert() {
         mass_mem = temp;
         flags |= 1;
     }
-    if ( bat <= 15) {
+    if (bat <= 15) {
         alert = 1;
         bat_mem = bat;
         flags |= (1 << 1);
